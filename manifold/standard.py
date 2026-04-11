@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-
-from __future__ import annotations
+# 
+# standard.py  Andrew Belles  April 10th, 2026 
+# 
+# Standard AE using ResNet style CNN architecture 
+# for encoding/decoding 
+# 
 
 import argparse
 from pathlib import Path

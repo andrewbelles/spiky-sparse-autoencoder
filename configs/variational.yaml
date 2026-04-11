@@ -14,6 +14,9 @@ model:
   activation: gelu
   dropout: 0.0
 
+objective:
+  beta: 1.0
+
 optimizer:
   muon_lr: 0.02
   muon_momentum: 0.95

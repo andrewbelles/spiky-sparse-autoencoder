@@ -2,10 +2,9 @@
 #
 # common.py  Andrew Belles  April 10th, 2026
 #
-# Shared modules for representation learning.
+# Shared modules for representation learning, 
+# specifically different AutoEncoder implementations 
 #
-
-from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Sequence
@@ -15,8 +14,8 @@ import snntorch as snn
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from muon import adam_update, muon_update
 
+from muon import adam_update, muon_update
 
 MUON_MODULE_TYPES = (nn.Linear, nn.Conv2d)
 
@@ -106,6 +105,29 @@ def compute_sparse_penalty(
 
 def standard_autoencoder_objective(x_hat: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     return F.mse_loss(x_hat, x)
+
+
+def sparse_autoencoder_objective(
+    x_hat: torch.Tensor,
+    x: torch.Tensor,
+    sparse_loss: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    reconstruction_loss = F.mse_loss(x_hat, x)
+    total_loss = reconstruction_loss + sparse_loss
+    return total_loss, reconstruction_loss, sparse_loss
+
+
+def variational_autoencoder_objective(
+    x_hat: torch.Tensor,
+    x: torch.Tensor,
+    mu: torch.Tensor,
+    logvar: torch.Tensor,
+    beta: float = 1.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    reconstruction_loss = F.mse_loss(x_hat, x)
+    kl_loss = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp()).sum(dim=1).mean()
+    total_loss = reconstruction_loss + beta * kl_loss
+    return total_loss, reconstruction_loss, kl_loss
 
 
 def spiking_autoencoder_objective(
@@ -290,6 +312,112 @@ class AutoEncoder(nn.Module):
         z = self.encode(x)
         x_hat = self.decode(z)
         return x_hat, z
+
+
+class SparseAutoEncoder(nn.Module):
+    def __init__(
+        self,
+        input_shape: Sequence[int],
+        latent_dim: int,
+        base_channels: int = 32,
+        channel_multipliers: Sequence[int] | None = None,
+        block_depth: int = 2,
+        activation: str = "gelu",
+        dropout: float = 0.0,
+        sparse_lambda: float = 1e-3,
+        target_sparsity: float = 0.05,
+        sparse_penalty: str = "kl",
+    ):
+        super().__init__()
+
+        if sparse_lambda < 0:
+            raise ValueError("sparse_lambda must be non-negative")
+        if not 0 < target_sparsity < 1:
+            raise ValueError("target_sparsity must be in (0, 1)")
+
+        self.backbone = AutoEncoder(
+            input_shape=input_shape,
+            latent_dim=latent_dim,
+            base_channels=base_channels,
+            channel_multipliers=channel_multipliers,
+            block_depth=block_depth,
+            activation=activation,
+            dropout=dropout,
+        )
+        self.sparse_lambda = sparse_lambda
+        self.target_sparsity = target_sparsity
+        self.sparse_penalty_name = sparse_penalty
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        latent_logits = self.backbone.encode(x)
+        return torch.sigmoid(latent_logits)
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        return self.backbone.decode(z)
+
+    def sparse_loss(self, z: torch.Tensor) -> torch.Tensor:
+        return self.sparse_lambda * compute_sparse_penalty(
+            z,
+            target_sparsity=self.target_sparsity,
+            penalty=self.sparse_penalty_name,
+        )
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        z = self.encode(x)
+        x_hat = self.decode(z)
+        sparse_loss = self.sparse_loss(z)
+        return x_hat, z, sparse_loss
+
+
+class VariationalAutoEncoder(nn.Module):
+    def __init__(
+        self,
+        input_shape: Sequence[int],
+        latent_dim: int,
+        base_channels: int = 32,
+        channel_multipliers: Sequence[int] | None = None,
+        block_depth: int = 2,
+        activation: str = "gelu",
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+
+        self.backbone = AutoEncoder(
+            input_shape=input_shape,
+            latent_dim=latent_dim,
+            base_channels=base_channels,
+            channel_multipliers=channel_multipliers,
+            block_depth=block_depth,
+            activation=activation,
+            dropout=dropout,
+        )
+        self.backbone.to_latent = nn.Identity()
+        self.latent_dim = latent_dim
+        self.mu_head = nn.Linear(self.backbone.encoded_dim, latent_dim)
+        self.logvar_head = nn.Linear(self.backbone.encoded_dim, latent_dim)
+
+    def encode(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        encoded = self.backbone._encode_features(x).flatten(start_dim=1)
+        mu = self.mu_head(encoded)
+        logvar = self.logvar_head(encoded)
+        return mu, logvar
+
+    def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        if not self.training:
+            return mu
+
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        return self.backbone.decode(z)
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        mu, logvar = self.encode(x)
+        z = self.reparameterize(mu, logvar)
+        x_hat = self.decode(z)
+        return x_hat, mu, logvar, z
 
 
 class SpikingAutoEncoder(nn.Module):

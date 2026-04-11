@@ -5,8 +5,6 @@
 # Shared helpers for manifold training hooks.
 #
 
-from __future__ import annotations
-
 import copy
 import random
 import sys

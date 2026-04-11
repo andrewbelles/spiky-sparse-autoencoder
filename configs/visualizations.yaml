@@ -1,0 +1,5 @@
+models:
+  - standard
+  - sparse
+  - variational
+  - spiky

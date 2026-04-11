@@ -13,6 +13,9 @@ model:
   block_depth: 2
   activation: gelu
   dropout: 0.0
+  sparse_lambda: 0.001
+  target_sparsity: 0.05
+  sparse_penalty: kl
 
 optimizer:
   muon_lr: 0.02

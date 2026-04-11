@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # 
-# spiky.py  Andrew Belles  April 10th, 2026 
+# variational.py  Andrew Belles  April 10th, 2026 
 # 
-# Spiky-Sparse AE using Spiky Neural Network for encoding and decoding 
-# with ResNet-style CNN layers for hidden layers 
+# Variational AE using ResNet-style CNN architecture 
+# for encoding/decoding. 
 # 
 
 import argparse
@@ -13,9 +13,9 @@ import torch
 
 from manifold.common import (
     MuonConfig,
-    SpikingAutoEncoder,
+    VariationalAutoEncoder,
     build_single_device_muon_optimizer,
-    spiking_autoencoder_objective,
+    variational_autoencoder_objective,
 )
 from manifold.train_utils import (
     DEFAULT_SPLITS,
@@ -33,25 +33,25 @@ from manifold.train_utils import (
 )
 
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "configs" / "spiky.yaml"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "configs" / "variational.yaml"
 DEFAULT_CONFIG = {
     "device": "auto",
     "seed": 7,
     "target_frames": 128,
-    "batch_size": 16,
+    "batch_size": 32,
     "num_workers": 4,
     "max_epochs": 100,
     "min_epochs": 10,
     "model": {
         "latent_dim": 128,
-        "encoder_channels": [32, 64],
-        "num_steps": 8,
-        "beta": 0.95,
-        "threshold": 1.0,
-        "reset_mechanism": "subtract",
-        "sparse_lambda": 1e-3,
-        "target_sparsity": 0.05,
-        "sparse_penalty": "kl",
+        "base_channels": 32,
+        "channel_multipliers": [1, 2, 4, 8],
+        "block_depth": 2,
+        "activation": "gelu",
+        "dropout": 0.0,
+    },
+    "objective": {
+        "beta": 1.0,
     },
     "optimizer": {
         "muon_lr": 0.02,
@@ -73,7 +73,7 @@ DEFAULT_CONFIG = {
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train the spiking sparse autoencoder on mel tensors.")
+    parser = argparse.ArgumentParser(description="Train the variational autoencoder on mel tensors.")
     parser.add_argument(
         "-d",
         "--data-dir",
@@ -91,76 +91,83 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _kl_per_sample(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+    return -0.5 * (1 + logvar - mu.pow(2) - logvar.exp()).sum(dim=1)
+
+
 def train_epoch(
-    model: SpikingAutoEncoder,
+    model: VariationalAutoEncoder,
     loader,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    beta: float,
 ) -> tuple[float, float, float]:
     model.train()
     total_loss = 0.0
     total_recon = 0.0
-    total_sparse = 0.0
+    total_kl = 0.0
     total_items = 0
 
     for inputs, _ in loader:
         inputs = inputs.to(device, non_blocking=device.type == "cuda")
         optimizer.zero_grad(set_to_none=True)
 
-        x_hat, latent_rate, sparse_loss = model(inputs)
-        loss, recon_loss, sparse_term = spiking_autoencoder_objective(x_hat, inputs, sparse_loss)
+        x_hat, mu, logvar, z = model(inputs)
+        loss, recon_loss, kl_loss = variational_autoencoder_objective(x_hat, inputs, mu, logvar, beta=beta)
         loss.backward()
         optimizer.step()
 
         batch_size = inputs.size(0)
         total_loss += loss.item() * batch_size
         total_recon += recon_loss.item() * batch_size
-        total_sparse += sparse_term.item() * batch_size
+        total_kl += kl_loss.item() * batch_size
         total_items += batch_size
 
     normalizer = max(1, total_items)
-    return total_loss / normalizer, total_recon / normalizer, total_sparse / normalizer
+    return total_loss / normalizer, total_recon / normalizer, total_kl / normalizer
 
 
 @torch.no_grad()
-def evaluate_epoch(model: SpikingAutoEncoder, loader, device: torch.device) -> tuple[float, float, float]:
+def evaluate_epoch(model: VariationalAutoEncoder, loader, device: torch.device, beta: float) -> tuple[float, float, float]:
     model.eval()
     total_loss = 0.0
     total_recon = 0.0
-    total_sparse = 0.0
+    total_kl = 0.0
     total_items = 0
 
     for inputs, _ in loader:
         inputs = inputs.to(device, non_blocking=device.type == "cuda")
-        x_hat, latent_rate, sparse_loss = model(inputs)
-        loss, recon_loss, sparse_term = spiking_autoencoder_objective(x_hat, inputs, sparse_loss)
+        x_hat, mu, logvar, z = model(inputs)
+        loss, recon_loss, kl_loss = variational_autoencoder_objective(x_hat, inputs, mu, logvar, beta=beta)
 
         batch_size = inputs.size(0)
         total_loss += loss.item() * batch_size
         total_recon += recon_loss.item() * batch_size
-        total_sparse += sparse_term.item() * batch_size
+        total_kl += kl_loss.item() * batch_size
         total_items += batch_size
 
     normalizer = max(1, total_items)
-    return total_loss / normalizer, total_recon / normalizer, total_sparse / normalizer
+    return total_loss / normalizer, total_recon / normalizer, total_kl / normalizer
 
 
 @torch.no_grad()
-def infer_batch(model: SpikingAutoEncoder, inputs: torch.Tensor) -> dict[str, torch.Tensor]:
-    x_hat, latent_rate, sparse_loss = model(inputs)
+def infer_batch(model: VariationalAutoEncoder, inputs: torch.Tensor) -> dict[str, torch.Tensor]:
+    x_hat, mu, logvar, z = model(inputs)
     reconstruction_mse = (x_hat - inputs).pow(2).flatten(start_dim=1).mean(dim=1)
-    mean_firing_rate = latent_rate.mean(dim=1)
+    kl_divergence = _kl_per_sample(mu, logvar)
+    latent_std = torch.exp(0.5 * logvar).mean(dim=1)
     return {
-        "embedding": latent_rate,
+        "embedding": mu,
         "reconstruction_mse": reconstruction_mse,
-        "mean_firing_rate": mean_firing_rate,
+        "kl_divergence": kl_divergence,
+        "latent_std": latent_std,
     }
 
 
 @torch.no_grad()
-def embedding_batch(model: SpikingAutoEncoder, inputs: torch.Tensor) -> torch.Tensor:
-    latent_rate, _ = model.encode(inputs)
-    return latent_rate
+def embedding_batch(model: VariationalAutoEncoder, inputs: torch.Tensor) -> torch.Tensor:
+    mu, logvar = model.encode(inputs)
+    return mu
 
 
 def main() -> int:
@@ -173,8 +180,9 @@ def main() -> int:
     target_frames = int(config["target_frames"])
     batch_size = int(config["batch_size"])
     num_workers = int(config["num_workers"])
+    beta = float(config["objective"]["beta"])
 
-    report(f"START module=spiky data_dir={data_dir} config={args.config}")
+    report(f"START module=variational data_dir={data_dir} config={args.config}")
 
     train_dataset = MelVectorDataset(data_dir, "training", target_frames)
     val_dataset = MelVectorDataset(data_dir, "validation", target_frames)
@@ -195,17 +203,14 @@ def main() -> int:
         min_size=int(config["early_stopping"]["embedding_subset_min_size"]),
     )
 
-    model = SpikingAutoEncoder(
+    model = VariationalAutoEncoder(
         input_shape=train_dataset.input_shape,
         latent_dim=int(config["model"]["latent_dim"]),
-        encoder_channels=tuple(config["model"]["encoder_channels"]),
-        num_steps=int(config["model"]["num_steps"]),
-        beta=float(config["model"]["beta"]),
-        threshold=float(config["model"]["threshold"]),
-        reset_mechanism=str(config["model"]["reset_mechanism"]),
-        sparse_lambda=float(config["model"]["sparse_lambda"]),
-        target_sparsity=float(config["model"]["target_sparsity"]),
-        sparse_penalty=str(config["model"]["sparse_penalty"]),
+        base_channels=int(config["model"]["base_channels"]),
+        channel_multipliers=tuple(config["model"]["channel_multipliers"]),
+        block_depth=int(config["model"]["block_depth"]),
+        activation=str(config["model"]["activation"]),
+        dropout=float(config["model"]["dropout"]),
     ).to(device)
 
     optimizer = build_single_device_muon_optimizer(
@@ -225,12 +230,10 @@ def main() -> int:
     best_val_loss = float("inf")
     previous_subset_embeddings = None
     best_epoch = 0
-    epochs_ran = 0
 
     for epoch in range(1, int(config["max_epochs"]) + 1):
-        epochs_ran = epoch
-        train_total, train_recon, train_sparse = train_epoch(model, train_loader, optimizer, device)
-        val_total, val_recon, val_sparse = evaluate_epoch(model, val_loader, device)
+        train_total, train_recon, train_kl = train_epoch(model, train_loader, optimizer, device, beta)
+        val_total, val_recon, val_kl = evaluate_epoch(model, val_loader, device, beta)
 
         if val_total < best_val_loss:
             best_val_loss = val_total
@@ -251,8 +254,8 @@ def main() -> int:
 
         log_line = (
             f"epoch={epoch} "
-            f"train_total={train_total:.6f} train_recon={train_recon:.6f} train_sparse={train_sparse:.6f} "
-            f"val_total={val_total:.6f} val_recon={val_recon:.6f} val_sparse={val_sparse:.6f} "
+            f"train_total={train_total:.6f} train_recon={train_recon:.6f} train_kl={train_kl:.6f} "
+            f"val_total={val_total:.6f} val_recon={val_recon:.6f} val_kl={val_kl:.6f} "
             f"gl={generalization_loss:.3f}"
         )
         if change_pct is not None:
@@ -262,7 +265,6 @@ def main() -> int:
         if epoch < int(config["min_epochs"]):
             continue
 
-        stop = False
         method = str(config["early_stopping"]["method"])
         if method == "generalization_loss":
             stop = generalization_loss > float(config["early_stopping"]["generalization_loss_threshold"])
@@ -282,7 +284,7 @@ def main() -> int:
 
     for split_name, dataset in zip(DEFAULT_SPLITS, (train_dataset, val_dataset, test_dataset)):
         loader = build_loader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, device=device)
-        output_path = output_root / f"spiky_{data_dir.name}_{split_name}.parquet"
+        output_path = output_root / f"variational_{data_dir.name}_{split_name}.parquet"
         output_paths[split_name] = export_embeddings_to_parquet(
             model,
             dataset,
@@ -294,7 +296,7 @@ def main() -> int:
         log(f"export split={split_name} path={output_path}")
 
     report(
-        f"DONE module=spiky best_epoch={best_epoch} best_val_total={best_val_loss:.6f} "
+        f"DONE module=variational best_epoch={best_epoch} best_val_total={best_val_loss:.6f} "
         f"training={output_paths['training']} validation={output_paths['validation']} test={output_paths['test']}"
     )
     return 0
