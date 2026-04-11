@@ -1,0 +1,15 @@
+.codex 
+.env 
+.clangd 
+.venv/ 
+
+__pycache__/ 
+
+!/preprocess/data/.gitkeep 
+/preprocess/data/* 
+!/preprocess/images/.gitkeep
+
+!/modeling/images/.gitkeep 
+
+/modeling/__pycache__/ 
+/preprocess/__pycache__/ 
