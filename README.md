@@ -18,7 +18,7 @@ The pipeline converts the `.mp3` files into a mel-spectrogram using `torchaudio`
 
 The mel-spectrograms are saved to pytorch tensors (`.pt` format) to `preprocess/data/fma_{size}_mel/`. These are the files used by the autoencoder. 
 
-### Usage 
+### Preprocess Usage  
 
 Configs for each stage of pipeline are located in `configs/`. 
 
@@ -37,10 +37,32 @@ bash -v preprocess/small.sh
 Then convert to mel-spectrogram using: 
 
 ```bash
-python preprocess/mel.py -d preprocess/data/fma_small 
+python -m preprocess.mel -d preprocess/data/fma_small 
 ```
 
 Pass the flag `--sample-images` to generate a single image for each genre. Optionally a different config can be passed via `-c configs/mel.yaml`.
+
+### Representation Usage 
+
+Learned representations can be trained using their configuration files. Example configs are outlined in `configs/`. All AE models use a ResNet-style CNN architecture for hidden layers with special care for the Spiky AE implementation (Since it structurally differs from an ANN). As an example, to train and generate representations using the training samples (and extrapolate to validation and test samples): 
+
+```bash
+python -m manifold.standard -d preprocess/data/fma_small_mel -c configs/standard.yaml
+```
+
+With the other AE models following the same pattern. I have defined the following model types:
+- Standard 
+- Spiky with KL divergence (Sparse)
+- Sparse 
+- Variational 
+
+There is a UMAP visualization tool in `manifold/` that shows a 2D projection of the learned representation with coloring by genre to visually confirm linear separability. It can be called via: 
+
+```bash
+python -m manifold.visualizations -c configs/visualizations.yaml
+```
+
+Where the config just specifies which AE methods to generate UMAP projections for. 
 
 ### Citation 
 
