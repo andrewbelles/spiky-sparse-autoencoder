@@ -40,12 +40,25 @@ def merge_config(defaults: dict, overrides: dict) -> dict:
     return merged
 
 
+def resolve_config_path(config_path: Path) -> Path:
+    if config_path.is_file():
+        return config_path
+
+    example_path = config_path.with_name(f"{config_path.stem}.example{config_path.suffix}")
+    if example_path.is_file():
+        return example_path
+
+    raise FileNotFoundError(f"missing config: {config_path}")
+
+
 def load_config(config_path: Path, defaults: dict) -> dict:
-    with config_path.open("r", encoding="utf-8") as handle:
+    resolved_path = resolve_config_path(config_path)
+
+    with resolved_path.open("r", encoding="utf-8") as handle:
         loaded = yaml.safe_load(handle) or {}
 
     if not isinstance(loaded, dict):
-        raise ValueError(f"config must be a mapping: {config_path}")
+        raise ValueError(f"config must be a mapping: {resolved_path}")
 
     return merge_config(defaults, loaded)
 

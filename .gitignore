@@ -5,6 +5,9 @@
 
 __pycache__/ 
 
+/configs/*.yaml
+!/configs/*.example.yaml
+
 !/preprocess/data/.gitkeep 
 /preprocess/data/* 
 !/preprocess/images/.gitkeep

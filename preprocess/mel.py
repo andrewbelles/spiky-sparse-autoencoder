@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-
-from __future__ import annotations
+# 
+# mel.py  Andrew Belles  April 10th 2026 
+# 
+# Generates Mel-Spectrogram for 64 bins at 22.05 kHz sampling rate. 
+# Log-scales and per-track min-max scales for SNN 
+# 
 
 import argparse
 import csv
@@ -60,14 +64,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def resolve_config_path(config_path: Path) -> Path:
+    if config_path.is_file():
+        return config_path
+
+    example_path = config_path.with_name(f"{config_path.stem}.example{config_path.suffix}")
+    if example_path.is_file():
+        return example_path
+
+    raise FileNotFoundError(f"missing config: {config_path}")
+
+
 def load_config(config_path: Path) -> MelConfig:
     raw_config = {}
+    resolved_path = resolve_config_path(config_path)
 
-    with config_path.open("r", encoding="utf-8") as handle:
+    with resolved_path.open("r", encoding="utf-8") as handle:
         loaded = yaml.safe_load(handle) or {}
 
     if not isinstance(loaded, dict):
-        raise ValueError(f"config must be a mapping: {config_path}")
+        raise ValueError(f"config must be a mapping: {resolved_path}")
 
     raw_config.update(loaded)
 

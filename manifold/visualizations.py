@@ -48,12 +48,25 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def resolve_config_path(config_path: Path) -> Path:
+    if config_path.is_file():
+        return config_path
+
+    example_path = config_path.with_name(f"{config_path.stem}.example{config_path.suffix}")
+    if example_path.is_file():
+        return example_path
+
+    raise FileNotFoundError(f"missing config: {config_path}")
+
+
 def load_config(config_path: Path) -> dict:
-    with config_path.open("r", encoding="utf-8") as handle:
+    resolved_path = resolve_config_path(config_path)
+
+    with resolved_path.open("r", encoding="utf-8") as handle:
         config = yaml.safe_load(handle) or {}
 
     if not isinstance(config, dict):
-        raise ValueError(f"config must be a mapping: {config_path}")
+        raise ValueError(f"config must be a mapping: {resolved_path}")
 
     models = config.get("models", [])
     if not isinstance(models, list) or not models:
@@ -132,45 +145,46 @@ def compute_umap_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def format_model_name(model: str) -> str:
+    return model.replace("_", " ").strip().title()
+
+
+def format_dataset_name(dataset_name: str) -> str:
+    cleaned = dataset_name.removesuffix("_mel")
+
+    for size in ("small", "medium", "large", "full"):
+        if size in cleaned.lower():
+            return size.title()
+
+    return cleaned.replace("_", " ").strip().title()
+
+
 def save_umap_figure(frame: pd.DataFrame, model: str, dataset_name: str, output_path: Path) -> Path:
     sns.set_theme(style="whitegrid")
-    fig, axes = plt.subplots(1, 2, figsize=(16, 7), constrained_layout=True)
-
-    sns.scatterplot(
-        data=frame,
-        x="umap_x",
-        y="umap_y",
-        hue="split",
-        ax=axes[0],
-        s=14,
-        alpha=0.75,
-        linewidth=0,
-        palette="Set2",
-    )
-    axes[0].set_title(f"{model} split structure")
-    axes[0].set_xlabel("UMAP-1")
-    axes[0].set_ylabel("UMAP-2")
+    fig, ax = plt.subplots(figsize=(10, 8), constrained_layout=True)
 
     sns.scatterplot(
         data=frame,
         x="umap_x",
         y="umap_y",
         hue="genre_top",
-        ax=axes[1],
-        s=14,
-        alpha=0.75,
+        ax=ax,
+        s=16,
+        alpha=0.8,
         linewidth=0,
         palette="tab20",
     )
-    axes[1].set_title(f"{model} genre structure")
-    axes[1].set_xlabel("UMAP-1")
-    axes[1].set_ylabel("UMAP-2")
+    ax.set_xlabel("UMAP-1")
+    ax.set_ylabel("UMAP-2")
+    ax.set_title("")
 
-    for axis in axes:
-        if axis.get_legend() is not None:
-            sns.move_legend(axis, "upper left", bbox_to_anchor=(1.02, 1.0), frameon=True)
+    if ax.get_legend() is not None:
+        sns.move_legend(ax, "upper left", bbox_to_anchor=(1.02, 1.0), frameon=True)
 
-    fig.suptitle(f"UMAP | {model} | {dataset_name}", fontsize=16)
+    fig.suptitle(
+        f"UMAP - {format_model_name(model)} - {format_dataset_name(dataset_name)}",
+        fontsize=16,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=200)
     plt.close(fig)
