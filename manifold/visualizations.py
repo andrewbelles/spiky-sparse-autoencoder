@@ -89,6 +89,8 @@ def discover_parquet_groups(data_root: Path, models: list[str]) -> dict[tuple[st
                     continue
 
                 dataset_name = stem[len(prefix) : -len(suffix)]
+                if "smoke" in dataset_name.lower():
+                    continue
                 groups.setdefault((model, dataset_name), {})[split] = path
 
     return groups

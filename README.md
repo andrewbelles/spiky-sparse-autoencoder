@@ -64,6 +64,18 @@ python -m manifold.visualizations -c configs/visualizations.yaml
 
 Where the config just specifies which AE methods to generate UMAP projections for. 
 
+### Visualizations of Representations 
+
+The Standard Autoencoder shows some linear separability through its UMAP projection: 
+
+![UMAP - Standard - Small](manifold/images/standard_fma_small_mel_umap.png)
+
+
+The Spiky-Sparse Autoencoder has some clustering by class but likewise is not strongly separable (at least visually): 
+
+![UMAP - Spiky - Small](manifold/images/spiky_fma_small_mel_umap.png)
+
+
 ### Citation 
 
 This dataset was made possible by the incredible work of Defferrard et al. If you are doing downstream research using this codebase, please ensure you also credit the original FMA authors:

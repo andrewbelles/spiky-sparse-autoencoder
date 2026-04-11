@@ -12,9 +12,8 @@ __pycache__/
 /preprocess/data/* 
 !/preprocess/images/.gitkeep
 
-!/manifold/images/.gitkeep 
 !/manifold/data/.gitkeep
 /manifold/data/* 
 
-/modeling/__pycache__/ 
+/manifold/__pycache__/
 /preprocess/__pycache__/ 
