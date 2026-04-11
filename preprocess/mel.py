@@ -30,12 +30,13 @@ class MelConfig:
     hop_length: int = 512
     batch_size: int = 32
     power: float = 2.0
+    top_db: float = 80.0
     device: str = "auto"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Convert an FMA audio directory into batched mel-spectrogram tensors."
+        description="Convert an FMA audio directory into batched log-normalized mel-spectrogram tensors."
     )
     parser.add_argument(
         "-d",
@@ -77,6 +78,7 @@ def load_config(config_path: Path) -> MelConfig:
         hop_length=int(raw_config.get("hop_length", 512)),
         batch_size=int(raw_config.get("batch_size", 32)),
         power=float(raw_config.get("power", 2.0)),
+        top_db=float(raw_config.get("top_db", 80.0)),
         device=str(raw_config.get("device", "auto")),
     )
 
@@ -94,6 +96,8 @@ def validate_config(config: MelConfig) -> None:
         raise ValueError("batch_size must be positive")
     if config.power <= 0:
         raise ValueError("power must be positive")
+    if config.top_db <= 0:
+        raise ValueError("top_db must be positive")
 
 
 def resolve_device(config_device: str) -> torch.device:
@@ -282,7 +286,7 @@ def slugify(value: str) -> str:
 
 
 def save_mel_image(mel_tensor: torch.Tensor, image_path: Path) -> None:
-    view = torch.flip(torch.log10(mel_tensor.clamp_min(1e-6)), dims=[0])
+    view = torch.flip(mel_tensor.float(), dims=[0])
     view = view - view.min()
     max_value = float(view.max())
     if max_value > 0:
@@ -290,6 +294,14 @@ def save_mel_image(mel_tensor: torch.Tensor, image_path: Path) -> None:
 
     image = Image.fromarray((view * 255).to(torch.uint8).numpy(), mode="L")
     image.save(image_path)
+
+
+def log_normalize_mels(mel_batch: torch.Tensor, top_db: float) -> torch.Tensor:
+    db_transform = torchaudio.transforms.AmplitudeToDB(stype="power", top_db=top_db).to(mel_batch.device)
+    mel_db = db_transform(mel_batch.clamp_min(1e-10))
+    mel_min = mel_db.amin(dim=(-2, -1), keepdim=True)
+    mel_max = mel_db.amax(dim=(-2, -1), keepdim=True)
+    return (mel_db - mel_min) / (mel_max - mel_min).clamp_min(1e-6)
 
 
 def write_sample_images(data_dir: Path, output_dir: Path) -> Path:
@@ -427,7 +439,8 @@ def convert_directory(data_dir: Path, config: MelConfig) -> tuple[Path, int, int
                 if batch_waveforms is None:
                     continue
 
-                mel_batch = mel_transform(batch_waveforms.to(device)).cpu()
+                mel_batch = mel_transform(batch_waveforms.to(device))
+                mel_batch = log_normalize_mels(mel_batch, config.top_db).cpu()
 
                 for mel_tensor, source_path, num_samples in zip(mel_batch, batch_paths, sample_lengths):
                     relative_path = source_path.relative_to(data_dir).with_suffix(".pt")

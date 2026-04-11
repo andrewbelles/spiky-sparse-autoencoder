@@ -14,7 +14,7 @@ The data used to train the SNN + SAE model comes from the *Free Music Archive (F
 - Pop 
 - Rock 
 
-The pipeline converts the `.mp3` files into a mel-spectrogram using `torchaudio`. I use $64$ mel bins and downsample audio to $22.05 kHz$ for VRAM efficiency (Running natively on GTX 4060, 8 GiB VRAM) and $22.05 kHz$ is a good candidate for satisfying the Nyquist-Shannon sample bound. 
+The pipeline converts the `.mp3` files into a mel-spectrogram using `torchaudio`. I use $64$ mel bins and downsample audio to $22.05 kHz$ for VRAM efficiency (Running natively on GTX 4060, 8 GiB VRAM) and $22.05 kHz$ is a good candidate for satisfying the Nyquist-Shannon sample bound. Likewise we log-scale the mel-spectrogram then apply a min-max scale per track so that all pixel values are bounded in $[0,1]$.
 
 The mel-spectrograms are saved to pytorch tensors (`.pt` format) to `preprocess/data/fma_{size}_mel/`. These are the files used by the autoencoder. 
 
