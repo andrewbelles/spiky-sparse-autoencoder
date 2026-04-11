@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/bash
 #
 # meta.sh  Andrew Belles  April 10th, 2026
 #

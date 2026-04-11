@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/bash
 #
 # small.sh  Andrew Belles  April 10th, 2026 
 # 
